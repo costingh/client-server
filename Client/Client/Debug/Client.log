@@ -1,0 +1,3 @@
+﻿  Client.cpp
+C:\Users\gheor\Desktop\repos\Client\Client\Client.cpp(74): warning C4715: 'sendTo': not all control paths return a value
+  Client.vcxproj -> C:\Users\gheor\Desktop\repos\Client\Debug\Client.exe
