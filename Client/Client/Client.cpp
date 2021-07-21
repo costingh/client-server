@@ -1,9 +1,11 @@
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
 #ifndef UNICODE
 #define UNICODE
 #endif
 
 #define WIN32_LEAN_AND_MEAN
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define IP "127.0.0.1"
 
 #include <winsock2.h>
 #include <Ws2tcpip.h>
@@ -13,20 +15,30 @@
 // Link with ws2_32.lib
 #pragma comment(lib, "Ws2_32.lib")
 
-#define IP "127.0.0.1"
+
+WSADATA wsaData;
+SOCKET SendSocket;
 
 int iResult;
-WSADATA wsaData;
-SOCKET SendSocket = INVALID_SOCKET;
+int BufLen;
+int SenderAddrSize;
+
+struct sockaddr_in SenderAddr;
 sockaddr_in RecvAddr;
-unsigned short Port = 27015;
+
+unsigned short Port;
+
 char SendBuf[1024];
-int BufLen = 1024;
-u_long iMode = 0;
+char RecvBuf[1024];
 
 int Initialize()
 {
-    //----------------------
+    SendSocket = INVALID_SOCKET;
+    Port = 27015;
+    BufLen = 1024;
+    SenderAddrSize = sizeof(SenderAddr);
+
+    //---------------------------------------------
    // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != NO_ERROR) {
@@ -51,7 +63,11 @@ int Initialize()
     RecvAddr.sin_port = htons(Port);
     RecvAddr.sin_addr.s_addr = inet_addr(IP);
 
+    //-----------------------------------------------
+    // set socket as non-blocking (set iMode = 1)
+    u_long iMode = 1;
     iResult = ioctlsocket(SendSocket, FIONBIO, &iMode);
+
     if (iResult != NO_ERROR)
         printf("ioctlsocket failed with error: %ld\n", iResult);
     return 0;
@@ -59,10 +75,10 @@ int Initialize()
 
 int sendTo()
 {
-    strcpy_s(SendBuf, "Message Sent!");
     //---------------------------------------------
-    // Send a datagram to the receiver
-    wprintf(L"Sending a datagram to the receiver...\n");
+    // Send a datagram to the server
+    strcpy_s(SendBuf, "Hello !!!!");
+    wprintf(L"Sending message to server....\n");
     iResult = sendto(SendSocket,
         SendBuf, BufLen, 0, (SOCKADDR*)&RecvAddr, sizeof(RecvAddr));
     if (iResult == SOCKET_ERROR) {
@@ -71,21 +87,43 @@ int sendTo()
         WSACleanup();
         return 1;
     }
+    return 0;
+}
+
+void receiveConfirmation() {
+
+    //-----------------------------------------------
+    // Call the recvfrom function to receive server confirmation
+    // on the bound socket.
+    wprintf(L"Receiving datagrams...\n");
+    iResult = recvfrom(SendSocket,
+        RecvBuf, BufLen, 0, (SOCKADDR*)&SenderAddr, &SenderAddrSize);
+
+    printf("%s \n", RecvBuf);
+    strcpy_s(RecvBuf, "");
+
+
+    if (iResult == SOCKET_ERROR) {
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return;
+        else wprintf(L"recvfrom failed with error %d\n", WSAGetLastError());
+    }    
 }
 
 void Update()
 { 
-    sendTo();
+    receiveConfirmation();
 }
 
 int main()
 {
     Initialize();
+    sendTo();
+    Sleep(1000); //sleeps 10 ms
 
     while (true)
     {
         Update();
-        Sleep(2000); //sleeps 20 ms
+        Sleep(1000); //sleeps 10 ms
     }
     //---------------------------------------------
     // When the application is finished sending, close the socket.
