@@ -9,27 +9,41 @@
 
 #include <winsock2.h>
 #include <Ws2tcpip.h>
+#include <iostream>
 #include <stdio.h>
 #include <string.h>
+#include <ctime>
 
 // Link with ws2_32.lib
 #pragma comment(lib, "Ws2_32.lib")
 
+#define TIMEOUT_DELAY 15
 
 WSADATA wsaData;
 SOCKET SendSocket;
 
+struct sockaddr_in SenderAddr;
+sockaddr_in RecvAddr;
+
 int iResult;
 int BufLen;
 int SenderAddrSize;
-
-struct sockaddr_in SenderAddr;
-sockaddr_in RecvAddr;
+int RecvAddrSize = sizeof(RecvAddr);
 
 unsigned short Port;
 
 char SendBuf[1024];
 char RecvBuf[1024];
+char message[1023];
+char messageType[1];
+
+time_t timeValue;
+
+enum MESSAGE_TYPE {
+    CONNECT = 48,
+    HELLO = 49,
+    PING = 50,
+};
 
 int Initialize()
 {
@@ -73,70 +87,145 @@ int Initialize()
     return 0;
 }
 
-int sendTo()
+int sendTo(char type)
 {
-    //---------------------------------------------
-    // Send a datagram to the server
-    strcpy_s(SendBuf, "Hello !!!!");
-    wprintf(L"Sending message to server....\n");
+    int iResult = 0;
+    memset(SendBuf, 0, BufLen);
+
+    switch (type)
+    {   
+        case CONNECT: 
+            wprintf(L"Connecting to server...\n");
+            SendBuf[0] = type;
+            memcpy(SendBuf + 1, "Connection request\n\0", strlen("Connection request\n\0") + 1);
+            break;
+        
+        case HELLO: 
+            wprintf(L"Sending Hello...\n");
+            SendBuf[0] = type;
+            memcpy(SendBuf + 1, "HELLO\n\0", strlen("HELLO\n\0"));
+            break;
+        
+        case PING: 
+            wprintf(L"Sending PONG...\n");
+            SendBuf[0] = type;
+            memcpy(SendBuf + 1, "PONG\n\0", strlen("PONG\n\0"));
+            break;
+        
+        default:
+            return -1;
+    }
+    
     iResult = sendto(SendSocket,
-        SendBuf, BufLen, 0, (SOCKADDR*)&RecvAddr, sizeof(RecvAddr));
+        SendBuf, strlen(SendBuf + 1) + 1, 0, (SOCKADDR*)&RecvAddr, sizeof(RecvAddr));
     if (iResult == SOCKET_ERROR) {
         wprintf(L"sendto failed with error: %d\n", WSAGetLastError());
         closesocket(SendSocket);
         WSACleanup();
         return 1;
     }
+
     return 0;
 }
 
-void receiveConfirmation() {
-
-    //-----------------------------------------------
-    // Call the recvfrom function to receive server confirmation
-    // on the bound socket.
-    wprintf(L"Receiving datagrams...\n");
+int receive()
+{
+    memset(RecvBuf, 0, BufLen);
     iResult = recvfrom(SendSocket,
-        RecvBuf, BufLen, 0, (SOCKADDR*)&SenderAddr, &SenderAddrSize);
-
-    printf("%s \n", RecvBuf);
-    strcpy_s(RecvBuf, "");
-
+        RecvBuf, BufLen, 0, (SOCKADDR*)&RecvAddr, &RecvAddrSize);
 
     if (iResult == SOCKET_ERROR) {
-        if (WSAGetLastError() == WSAEWOULDBLOCK) return;
-        else wprintf(L"recvfrom failed with error %d\n", WSAGetLastError());
-    }    
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return 0;
+        else {
+            wprintf(L"recvfrom failed with error %d\n", WSAGetLastError());
+            return 1;
+        }
+    }
+
+    switch (RecvBuf[0])
+    {
+        case CONNECT:
+            time(&timeValue);
+            // add 1 to hide first byte of RecvBuf which is the response type
+            std::cout << RecvBuf + 1 << std::endl;
+            break;
+
+        case HELLO:
+            wprintf(L"Receiving Hello...\n");
+            break;
+
+        case PING:
+            if (difftime(time(NULL), timeValue) >= TIMEOUT_DELAY) {
+                std::cout << "Connection timed out..." << std::endl;
+                return -1;
+            }
+            time(&timeValue);
+            std::cout <<"Receiving " << RecvBuf + 1;
+            iResult = sendTo(PING);
+            if (iResult != 0) return iResult;
+            break;
+
+        default:
+            return -1;
+    }
+
+    return 0;
 }
 
-void Update()
-{ 
-    receiveConfirmation();
+int connectToServer() {
+    time(&timeValue);
+    int iResult = sendTo(CONNECT);
+
+    if (iResult == SOCKET_ERROR) {
+        wprintf(L"sendto failed with error: %d\n", WSAGetLastError());
+        closesocket(SendSocket);
+        WSACleanup();
+        return iResult;
+    }
+
+    return 0;
+}
+
+int Update()
+{     
+    iResult = receive();
+    if (iResult) return iResult;
+    return 0;
 }
 
 int main()
 {
     Initialize();
-    sendTo();
-    Sleep(1000); //sleeps 10 ms
+
+    iResult = connectToServer();
+    if (iResult != 0) {
+        wprintf(L"Server connection failed\n");
+        iResult = closesocket(SendSocket);
+        if (iResult == SOCKET_ERROR) {
+            wprintf(L"closesocket failed with error: %d\n", WSAGetLastError());
+            WSACleanup();
+            return 1;
+        }
+        WSACleanup();
+        return 0;
+    }
 
     while (true)
     {
-        Update();
+        iResult = Update();
+        if (iResult != 0) {
+            wprintf(L"Update error\n");
+            iResult = closesocket(SendSocket);
+            if (iResult == SOCKET_ERROR) {
+                wprintf(L"closesocket failed with error: %d\n", WSAGetLastError());
+                WSACleanup();
+                return 1;
+            }
+            WSACleanup();
+            return 1;
+        }
         Sleep(1000); //sleeps 10 ms
     }
-    //---------------------------------------------
-    // When the application is finished sending, close the socket.
-    wprintf(L"Finished sending. Closing socket.\n");
-    iResult = closesocket(SendSocket);
-    if (iResult == SOCKET_ERROR) {
-        wprintf(L"closesocket failed with error: %d\n", WSAGetLastError());
-        WSACleanup();
-        return 1;
-    }
-    //---------------------------------------------
-    // Clean up and quit.
-    wprintf(L"Exiting.\n");
-    WSACleanup();
+
     return 0;
 }
